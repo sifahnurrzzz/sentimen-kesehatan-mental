@@ -9,10 +9,10 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 import os
 
-# ============ KONFIGURASI ============
+# ============ KONFIGURASI HALAMAN ============
 st.set_page_config(
     page_title="Analisis Sentimen Kesehatan Mental",
     page_icon="🧠",
@@ -37,82 +37,100 @@ with st.sidebar:
         "🔮 Prediksi",
         "📖 Tentang"
     ])
+
+# ============ LOAD DATASET ASLI ============
+@st.cache_data
+def load_dataset():
+    """Load dataset asli dari file CSV"""
     
-    st.markdown("---")
-    st.markdown("### 📊 Statistik")
+    # Cek apakah file ada
+    files_exist = {
+        'train': os.path.exists('datd_train.csv'),
+        'test': os.path.exists('datd_test.csv'),
+        'rand': os.path.exists('datd_rand.csv')
+    }
     
-    # Load data untuk statistik
-    @st.cache_data
-    def load_stats():
-        if os.path.exists('datd_train.csv'):
-            train = pd.read_csv('datd_train.csv')
-            test = pd.read_csv('datd_test.csv')
-            rand = pd.read_csv('datd_rand.csv')
-            df = pd.concat([train, test, rand], ignore_index=True)
-            df = df.dropna()
-            return df, True
-        else:
-            # Data sintetis
-            np.random.seed(42)
-            texts = ['gelisah']*250 + ['semangat']*250
-            labels = [1]*250 + [0]*250
-            return pd.DataFrame({'text': texts, 'label': labels}), False
-    
-    df, is_real = load_stats()
-    
-    st.metric("📝 Total Data", len(df))
-    st.metric("😰 Sentimen Negatif", len(df[df['label']==1]))
-    st.metric("😊 Sentimen Netral", len(df[df['label']==0]))
+    if all(files_exist.values()):
+        # Load semua file CSV asli
+        train_df = pd.read_csv('datd_train.csv')
+        test_df = pd.read_csv('datd_test.csv')
+        rand_df = pd.read_csv('datd_rand.csv')
+        
+        # Gabungkan semua data
+        df = pd.concat([train_df, test_df, rand_df], ignore_index=True)
+        
+        # Bersihkan data
+        df = df.dropna(subset=['label'])
+        df['label'] = df['label'].astype(int)
+        
+        st.success(f"✅ Dataset asli berhasil dimuat! Total {len(df)} tweet")
+        return df, True
+    else:
+        st.error("❌ File CSV tidak ditemukan!")
+        st.info("Pastikan file berikut ada di folder yang sama:")
+        for name, exists in files_exist.items():
+            status = "✅" if exists else "❌"
+            st.write(f"{status} datd_{name}.csv")
+        
+        # Fallback ke data kecil untuk demo
+        st.warning("⚠️ Menggunakan data demo kecil...")
+        demo_data = pd.DataFrame({
+            'text': ['aku gelisah', 'semangat pagi', 'stress berat', 'bahagia selalu', 'cemas mulu', 'sehat selalu'],
+            'label': [1, 0, 1, 0, 1, 0]
+        })
+        return demo_data, False
 
 # ============ PREPROCESSING ============
 def clean_text(text):
+    """Bersihkan teks"""
+    if pd.isna(text):
+        return ""
     text = str(text).lower()
+    text = re.sub(r'@\w+', '', text)
+    text = re.sub(r'http\S+', '', text)
+    text = re.sub(r'#\w+', '', text)
+    text = re.sub(r'\d+', '', text)
     text = re.sub(r'[^a-zA-Z\s]', '', text)
+    text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
 # ============ TRAINING MODEL ============
 @st.cache_resource
-def train_all_models():
-    # Load data
-    if os.path.exists('datd_train.csv'):
-        train = pd.read_csv('datd_train.csv')
-        test = pd.read_csv('datd_test.csv')
-        rand = pd.read_csv('datd_rand.csv')
-        df = pd.concat([train, test, rand], ignore_index=True)
-        df = df.dropna()
-    else:
-        np.random.seed(42)
-        neg = ["gelisah", "cemas", "stress", "depresi", "takut", "sedih"]
-        neu = ["semangat", "sehat", "bahagia", "tenang", "baik", "senang"]
-        texts = [np.random.choice(neg) for _ in range(300)] + [np.random.choice(neu) for _ in range(300)]
-        labels = [1]*300 + [0]*300
-        df = pd.DataFrame({'text': texts, 'label': labels})
+def train_models():
+    """Latih model dengan dataset asli"""
     
-    # Preprocess
-    df['clean'] = df['text'].apply(clean_text)
+    df, is_real = load_dataset()
     
-    # Vectorize
-    vectorizer = TfidfVectorizer(max_features=1000)
-    X = vectorizer.fit_transform(df['clean'])
+    # Preprocessing
+    df['clean_text'] = df['text'].apply(clean_text)
+    
+    # Hapus teks kosong
+    df = df[df['clean_text'].str.len() > 0]
+    
+    # TF-IDF Vectorization
+    vectorizer = TfidfVectorizer(max_features=500)
+    X = vectorizer.fit_transform(df['clean_text'])
     y = df['label']
     
-    # Split
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # Split data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
     
     # Models
     models = {
         'Naive Bayes': MultinomialNB(),
         'KNN': KNeighborsClassifier(n_neighbors=5),
-        'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42)
+        'Random Forest': RandomForestClassifier(n_estimators=50, random_state=42)
     }
     
     results = []
-    trained = {}
+    trained_models = {}
     
     for name, model in models.items():
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
-        trained[name] = model
+        trained_models[name] = model
         
         results.append({
             'Model': name,
@@ -122,44 +140,47 @@ def train_all_models():
             'F1-Score': f1_score(y_test, y_pred, average='weighted')
         })
     
-    return df, vectorizer, trained, pd.DataFrame(results)
+    return df, vectorizer, trained_models, pd.DataFrame(results), y_test
+
+# Load data and train
+with st.spinner("Memuat dataset dan melatih model..."):
+    df, vectorizer, models, results_df, y_test = train_models()
 
 # ============ HALAMAN DATASET ============
 if menu == "📋 Dataset":
     st.markdown("### 📋 Dataset Tweet")
     
-    col1, col2 = st.columns([2, 1])
+    col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("#### Contoh Data")
-        st.dataframe(df[['text', 'label']].head(10), use_container_width=True)
+        st.metric("📝 Total Data", len(df))
+        st.metric("😰 Sentimen Negatif (1)", len(df[df['label']==1]))
+        st.metric("😊 Sentimen Netral (0)", len(df[df['label']==0]))
     
     with col2:
-        st.markdown("#### Distribusi Label")
         fig = px.pie(
             values=[len(df[df['label']==0]), len(df[df['label']==1])],
             names=['Netral (0)', 'Negatif (1)'],
-            color_discrete_sequence=['#2a5298', '#ff6b6b'],
-            hole=0.4
+            title='Distribusi Sentimen',
+            color_discrete_sequence=['#2a5298', '#ff6b6b']
         )
         st.plotly_chart(fig, use_container_width=True)
     
-    st.markdown("---")
-    st.markdown("#### Proses Preprocessing")
-    st.markdown("""
-    1. **Case Folding** - Mengubah huruf menjadi lowercase
-    2. **Cleaning** - Menghapus karakter khusus, angka, dan tanda baca
-    3. **Tokenisasi** - Memecah kalimat menjadi kata
-    4. **Stopword Removal** - Menghapus kata umum (dan, yang, di)
-    5. **Vectorization** - TF-IDF untuk mengubah teks menjadi angka
-    """)
+    st.markdown("#### Contoh Data (20 baris pertama)")
+    st.dataframe(df[['text', 'label']].head(20), use_container_width=True)
+    
+    # Statistik tambahan
+    with st.expander("📊 Statistik Dataset"):
+        st.write("**Jumlah per label:**")
+        st.write(df['label'].value_counts())
+        st.write("**Panjang teks (karakter):**")
+        st.write(f"Min: {df['text'].str.len().min()}")
+        st.write(f"Max: {df['text'].str.len().max()}")
+        st.write(f"Rata-rata: {df['text'].str.len().mean():.0f}")
 
-# ============ HALAMAN PERBANDINGAN ============
+# ============ HALAMAN PERBANDINGAN MODEL ============
 elif menu == "📊 Perbandingan Model":
     st.markdown("### 📊 Perbandingan Performa Model")
-    
-    with st.spinner("Melatih model..."):
-        df, vectorizer, models, results_df = train_all_models()
     
     # Bar chart
     metrics = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
@@ -179,7 +200,7 @@ elif menu == "📊 Perbandingan Model":
         ))
     
     fig.update_layout(
-        title="Perbandingan Ketiga Model",
+        title="Perbandingan Performa Model",
         yaxis_title="Score",
         yaxis_range=[0, 1],
         barmode='group',
@@ -187,58 +208,56 @@ elif menu == "📊 Perbandingan Model":
     )
     st.plotly_chart(fig, use_container_width=True)
     
-    # Tabel
-    st.markdown("#### Hasil Evaluasi Lengkap")
+    # Tabel hasil
+    st.markdown("#### Tabel Hasil Evaluasi")
     st.dataframe(
-        results_df.style.format({m: '{:.4f}' for m in metrics}).background_gradient(cmap='Blues', subset=['F1-Score']),
+        results_df.style.format({m: '{:.4f}' for m in metrics}),
         use_container_width=True
     )
     
     # Best model
     best = results_df.loc[results_df['F1-Score'].idxmax()]
     st.success(f"""
-    🏆 **Model Terbaik: {best['Model']}**
-    
-    - Accuracy: {best['Accuracy']:.4f} ({best['Accuracy']*100:.2f}%)
-    - F1-Score: best['F1-Score']:.4f} ({best['F1-Score']*100:.2f}%)
+    🏆 **Model Terbaik: {best['Model']}**  
+    - Accuracy: {best['Accuracy']:.4f} ({best['Accuracy']*100:.2f}%)  
+    - F1-Score: {best['F1-Score']:.4f} ({best['F1-Score']*100:.2f}%)
     """)
     
-    # Radar chart
-    fig2 = go.Figure()
-    for model in results_df['Model'].unique():
-        vals = results_df[results_df['Model'] == model][metrics].values[0].tolist()
-        vals += vals[:1]
-        fig2.add_trace(go.Scatterpolar(
-            r=vals,
-            theta=metrics + [metrics[0]],
-            fill='toself',
-            name=model
-        ))
+    # Confusion Matrix untuk model terbaik
+    st.markdown("#### Confusion Matrix (Model Terbaik)")
     
-    fig2.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
-        showlegend=True,
-        height=450
+    best_model = models[best['Model']]
+    # Perlu re-predict untuk confusion matrix
+    df_temp, vec_temp, _, _, y_test_temp = train_models()
+    X_temp = vec_temp.transform(df_temp['clean_text'])
+    _, X_test_temp, _, y_test_temp = train_test_split(X_temp, df_temp['label'], test_size=0.2, random_state=42, stratify=df_temp['label'])
+    y_pred_best = best_model.predict(X_test_temp)
+    
+    cm = confusion_matrix(y_test_temp, y_pred_best)
+    fig_cm = px.imshow(
+        cm,
+        text_auto=True,
+        x=['Netral (0)', 'Negatif (1)'],
+        y=['Netral (0)', 'Negatif (1)'],
+        color_continuous_scale='Blues',
+        title=f"Confusion Matrix - {best['Model']}"
     )
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig_cm, use_container_width=True)
 
 # ============ HALAMAN PREDIKSI ============
 elif menu == "🔮 Prediksi":
     st.markdown("### 🔮 Prediksi Sentimen")
     
-    with st.spinner("Memuat model..."):
-        df, vectorizer, models, results_df = train_all_models()
-    
     # Pilih model
     model_choice = st.selectbox(
-        "Pilih Model yang Akan Digunakan:",
+        "Pilih Model:",
         list(models.keys()),
-        index=2  # default Random Forest
+        index=2  # Random Forest sebagai default
     )
     
     # Input teks
     text_input = st.text_area(
-        "Masukkan Teks Tweet:",
+        "Masukkan Teks:",
         height=120,
         placeholder="Contoh: Aku merasa sangat gelisah dan cemas hari ini..."
     )
@@ -255,44 +274,54 @@ elif menu == "🔮 Prediksi":
             pred = model.predict(vec)[0]
             proba = model.predict_proba(vec)[0]
             
-            # Result
+            # Hasil
             if pred == 1:
-                st.markdown("""
+                st.markdown(f"""
                 <div style="background: #ff6b6b; padding: 1.5rem; border-radius: 15px; color: white; text-align: center;">
                     <h2>😰 NEGATIF</h2>
                     <p>Teks ini mengandung sentimen negatif terkait kesehatan mental</p>
                     <hr>
-                    <p>Probabilitas Negatif: {:.2f}%</p>
-                    <p>Probabilitas Netral: {:.2f}%</p>
+                    <p>Probabilitas Negatif: {proba[1]*100:.2f}%</p>
+                    <p>Probabilitas Netral: {proba[0]*100:.2f}%</p>
                 </div>
-                """.format(proba[1]*100, proba[0]*100), unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
             else:
-                st.markdown("""
+                st.markdown(f"""
                 <div style="background: #4CAF50; padding: 1.5rem; border-radius: 15px; color: white; text-align: center;">
                     <h2>😊 NETRAL</h2>
                     <p>Teks ini memiliki sentimen netral</p>
                     <hr>
-                    <p>Probabilitas Netral: {:.2f}%</p>
-                    <p>Probabilitas Negatif: {:.2f}%</p>
+                    <p>Probabilitas Netral: {proba[0]*100:.2f}%</p>
+                    <p>Probabilitas Negatif: {proba[1]*100:.2f}%</p>
                 </div>
-                """.format(proba[0]*100, proba[1]*100), unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
         else:
-            st.warning("Silakan masukkan teks terlebih dahulu!")
+            st.warning("⚠️ Silakan masukkan teks terlebih dahulu!")
     
-    # Contoh
+    # Contoh tweet dari dataset asli
     st.markdown("---")
-    st.markdown("#### 💡 Contoh Teks untuk Dicoba")
+    st.markdown("#### 💡 Contoh Tweet dari Dataset")
     
     col1, col2 = st.columns(2)
+    
     with col1:
-        if st.button("😰 Contoh Sentimen Negatif"):
-            st.session_state['contoh'] = "aku gelisah banget ga bisa tidur semalaman"
+        st.markdown("**Tweet Negatif:**")
+        neg_samples = df[df['label']==1]['text'].head(3).tolist()
+        for i, tweet in enumerate(neg_samples):
+            tweet_short = tweet[:80] + "..." if len(tweet) > 80 else tweet
+            if st.button(f"📝 {i+1}. {tweet_short}", key=f"neg_{i}"):
+                st.session_state['contoh'] = tweet
+    
     with col2:
-        if st.button("😊 Contoh Sentimen Netral"):
-            st.session_state['contoh'] = "ayo jaga kesehatan mental dengan olahraga"
+        st.markdown("**Tweet Netral:**")
+        neu_samples = df[df['label']==0]['text'].head(3).tolist()
+        for i, tweet in enumerate(neu_samples):
+            tweet_short = tweet[:80] + "..." if len(tweet) > 80 else tweet
+            if st.button(f"📝 {i+1}. {tweet_short}", key=f"neu_{i}"):
+                st.session_state['contoh'] = tweet
     
     if 'contoh' in st.session_state:
-        st.info(f"📝 Teks: {st.session_state['contoh']}")
+        st.info(f"💡 Teks dipilih: {st.session_state['contoh'][:150]}")
 
 # ============ HALAMAN TENTANG ============
 else:
@@ -300,29 +329,31 @@ else:
     
     st.markdown("""
     #### 🎯 Latar Belakang
-    Proyek ini bertujuan untuk menganalisis sentimen tweet tentang kesehatan mental 
-    menggunakan tiga algoritma machine learning.
+    Proyek ini menganalisis sentimen tweet tentang kesehatan mental menggunakan tiga algoritma machine learning.
     
-    #### 🤖 Algoritma yang Digunakan
-    | Algoritma | Kelebihan | Kekurangan |
-    |-----------|-----------|------------|
-    | **Naive Bayes** | Cepat, baik untuk teks | Asumsi independensi fitur |
-    | **KNN** | Sederhana, akurat | Lambat untuk data besar |
-    | **Random Forest** | Akurasi tinggi, robust | Lebih kompleks |
+    #### 🤖 Algoritma
+    | Algoritma | Kelebihan |
+    |-----------|-----------|
+    | **Naive Bayes** | Cepat, cocok untuk klasifikasi teks |
+    | **KNN** | Sederhana, akurat untuk data kecil |
+    | **Random Forest** | Akurasi tinggi, robust |
     
     #### 📊 Metrik Evaluasi
-    - **Accuracy**: Persentase prediksi benar
+    - **Accuracy**: Persentase prediksi yang benar
     - **Precision**: Ketepatan prediksi positif
-    - **Recall**: Kemampuan menemukan semua positif
-    - **F1-Score**: Harmonisasi precision & recall
+    - **Recall**: Kemampuan menemukan data positif
+    - **F1-Score**: Rata-rata harmonis precision & recall
     
     #### 👥 Anggota Kelompok
-    - Febriana Afiyah (237006023)
-    - Sifah Nur Rizkiyah (237006035)
-    - Linda Yulia Sudrajat (237006040)
+    - **Febriana Afiyah** (237006023)
+    - **Sifah Nur Rizkiyah** (237006035)
+    - **Linda Yulia Sudrajat** (237006040)
     
     #### 📅 Mata Kuliah
     Rekayasa Data - UAS
+    
+    #### 📂 Sumber Data
+    Twitter (X) - Tweet tentang kesehatan mental
     """)
 
 # ============ FOOTER ============
