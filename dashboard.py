@@ -360,6 +360,6 @@ else:
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #888; padding: 1rem;">
-    © 2024 Kelompok 11 | Analisis Sentimen Kesehatan Mental
+    © 2026 Kelompok 11 | Analisis Sentimen Kesehatan Mental
 </div>
 """, unsafe_allow_html=True)
